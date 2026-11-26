@@ -11,6 +11,15 @@
 
 namespace caelestia::shell::multimedia {
 
+namespace {
+
+// Local patch: large still images (wallpapers) skip the lossy BC3 cache and are drawn from the original file
+bool bypassCache(VisualSource::Type type, const QSize& devicePixels) {
+    return type == VisualSource::Type::Still && devicePixels.width() >= 1920;
+}
+
+} // namespace
+
 using Qt::StringLiterals::operator""_s;
 
 VisualSource::VisualSource(QObject* parent)
@@ -259,7 +268,9 @@ void VisualSource::refresh() {
         return;
     }
 
-    const auto bucket = ImageCache::bucketFor((m_sizeSource->size() * window->devicePixelRatio()).toSize());
+    const auto devicePixels = (m_sizeSource->size() * window->devicePixelRatio()).toSize();
+    // Local patch: no bucket rounding when the cache is bypassed, so the image is drawn exactly 1:1
+    const auto bucket = bypassCache(m_type, devicePixels) ? devicePixels : ImageCache::bucketFor(devicePixels);
     const auto key = ImageCache::keyFor(path, bucket, aspectMode());
     if (key != m_key) {
         m_key = key;
@@ -283,8 +294,10 @@ void VisualSource::loadBucket(const QSize& bucket) {
         return;
     }
 
-    if (cached.isEmpty()) {
-        cache->store(m_key, path, bucket, aspectMode());
+    const auto bypass = bypassCache(m_type, bucket); // Local patch
+    if (cached.isEmpty() || bypass) {
+        if (!bypass)
+            cache->store(m_key, path, bucket, aspectMode());
         // Qt decodes the whole image, and scales before it transforms
         const auto cover = ktx::coverFor(path, bucket);
         if (m_fillMode == FillMode::PreserveAspectCrop && cover.size.isValid())
